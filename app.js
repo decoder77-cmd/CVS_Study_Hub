@@ -1,6 +1,7 @@
 (() => {
 'use strict';
 const DATA = window.CVS_DATA;
+// Keep the original storage key so existing study progress is preserved across this visual update.
 const KEY = 'cvs-study-hub-a2-v1';
 const $ = (s,root=document)=>root.querySelector(s);
 const $$ = (s,root=document)=>Array.from(root.querySelectorAll(s));
@@ -37,12 +38,41 @@ function load(){
 }
 let storageAvailable=true;
 let state=load(), currentTab='overview', lectureSearch='', subjectFilter='all', lectureFilter='all', toastTimer;
+function setSaveStatus(saved){
+  const el=$('#saveStatus');
+  if(!el)return;
+  el.innerHTML=saved?'<span class="status-dot"></span> محفوظ':'! تعذر الحفظ';
+}
 function persist(){
-  try{localStorage.setItem(KEY,JSON.stringify(state)); $('#saveStatus').textContent='● محفوظ';}
-  catch(e){$('#saveStatus').textContent='! تعذر الحفظ'; showToast('مساحة التخزين ممتلئة؛ صدّر نسخة احتياطية.');}
+  try{localStorage.setItem(KEY,JSON.stringify(state)); setSaveStatus(true);}
+  catch(e){setSaveStatus(false); showToast('مساحة التخزين ممتلئة؛ صدّر نسخة احتياطية.');}
 }
 function showToast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2400);}
 function applyTheme(){document.body.classList.toggle('light',state.settings.theme==='light');}
+const appShell=$('#appShell');
+const menuToggle=$('#menuToggle');
+const mobileSidebar=()=>window.matchMedia('(max-width: 900px)').matches;
+function setSidebarOpen(open){
+  if(mobileSidebar()){
+    appShell.classList.toggle('sidebar-open',open);
+    menuToggle.setAttribute('aria-expanded',String(open));
+    menuToggle.setAttribute('aria-label',open?'إغلاق القائمة':'فتح القائمة');
+  }else{
+    appShell.classList.toggle('sidebar-collapsed',!open);
+    menuToggle.setAttribute('aria-expanded',String(open));
+    menuToggle.setAttribute('aria-label',open?'إخفاء القائمة':'إظهار القائمة');
+  }
+}
+function toggleSidebar(){
+  const open=mobileSidebar()?appShell.classList.contains('sidebar-open'):!appShell.classList.contains('sidebar-collapsed');
+  setSidebarOpen(!open);
+}
+function closeMobileSidebar(){if(mobileSidebar()&&appShell.classList.contains('sidebar-open'))setSidebarOpen(false);}
+window.addEventListener('keydown',e=>{if(e.key==='Escape')closeMobileSidebar();});
+window.addEventListener('resize',()=>{
+  if(mobileSidebar()){appShell.classList.remove('sidebar-collapsed');appShell.classList.remove('sidebar-open');menuToggle.setAttribute('aria-expanded','false');menuToggle.setAttribute('aria-label','فتح القائمة');}
+  else{appShell.classList.remove('sidebar-open');appShell.classList.remove('sidebar-collapsed');menuToggle.setAttribute('aria-expanded','true');menuToggle.setAttribute('aria-label','إخفاء القائمة');}
+});
 function statCard(label,value,foot){return `<div class="stat-card"><div class="stat-label">${label}</div><div class="stat-value">${value}</div><div class="stat-foot">${foot||''}</div></div>`;}
 function bar(pct){return `<div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>`;}
 function lectStats(list=DATA.lectures){let stages=0,done=0;list.forEach(l=>{const x=state.lectures[l.id]||{};stages+=Number(!!x.studied)+Number(!!x.recall)+Number(!!x.mcq);if(x.studied&&x.recall&&x.mcq)done++;});return {stages,total:list.length*3,done,lectures:list.length,pct:list.length?Math.round(stages/(list.length*3)*100):0,donePct:list.length?Math.round(done/list.length*100):0};}
@@ -95,14 +125,16 @@ function revisionView(){const tasks=[...state.revisionTasks].sort((a,b)=>(a.date
 function mistakesView(){return `<section class="panel"><div class="panel-head"><h2>تسجيل نقطة ضعف أو غلطة</h2><span class="panel-sub">سجل السبب وطريقة التصحيح</span></div><form id="mistakeForm" class="form-grid"><div class="field"><label>عنوان المشكلة</label><input name="title" required maxlength="100" placeholder="مثال: Confusing preload and afterload"></div><div class="field"><label>المادة</label><select name="subject">${subjectOrder.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div><div class="field wide"><label>إيه اللي غلط أو مش واضح؟</label><textarea name="problem" placeholder="اكتب الفكرة أو السؤال اللي بتتلخبط فيه"></textarea></div><div class="field"><label>التصحيح / الإجراء المطلوب</label><input name="fix" placeholder="إيه اللي هتعمله عشان تصلحها؟"></div><div class="field"><label>موعد المراجعة القادم</label><input name="date" type="date"></div><div class="wide"><button class="primary-btn" type="submit">＋ حفظ نقطة الضعف</button></div></form></section><section class="panel"><div class="panel-head"><h2>سجل نقاط الضعف</h2><span class="panel-sub">${state.weakPoints.filter(x=>!x.resolved).length} مفتوحة</span></div><div class="mistake-list">${state.weakPoints.length?state.weakPoints.map(x=>`<article class="mistake-card"><div class="task-row"><input type="checkbox" data-mistake-resolved="${esc(x.id)}" ${x.resolved?'checked':''}><div class="task-content"><div class="task-title">${esc(x.title)}</div><div class="task-meta">${esc(x.subject)} ${x.date?'· مراجعة: '+dateString(x.date):''} ${x.resolved?'· تم التصحيح':''}</div>${x.problem?`<div class="task-note"><b>المشكلة:</b> ${esc(x.problem)}</div>`:''}${x.fix?`<div class="task-note"><b>التصحيح:</b> ${esc(x.fix)}</div>`:''}</div><button class="tiny-btn" data-delete-mistake="${esc(x.id)}">حذف</button></div></article>`).join(''):'<div class="empty">مفيش نقاط ضعف مسجلة حتى الآن. أضف أي مفهوم أو سؤال يتكرر فيه الخطأ.</div>'}</div></section>`;}
 function finalView(){const done=finalItems.filter((_,i)=>state.finalChecks[i]).length,pct=Math.round(done/finalItems.length*100);return `<section class="panel"><div class="panel-head"><h2>CVS Final Readiness</h2><span class="panel-sub">قائمة مراجعة قبل الامتحان</span></div><div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div><div class="progress-meta"><span>${done} / ${finalItems.length} تم إنجازه</span><span>${pct}%</span></div><div class="final-list" style="margin-top:14px">${finalItems.map((x,i)=>`<label class="final-item"><input type="checkbox" data-final="${i}" ${state.finalChecks[i]?'checked':''}><span>${esc(x)}</span></label>`).join('')}</div></section><section class="panel"><div class="panel-head"><h2>مواعيد الامتحانات</h2></div><div class="date-list"><div class="date-item"><div class="date-chip">12<small>DEC</small></div><div><div class="date-title">Continuous Assessment – Cardiovascular</div><div class="date-caption">Saturday, 12/12/2026</div></div></div><div class="date-item"><div class="date-chip">26–31<small>DEC</small></div><div><div class="date-title">CVS Practical Exams (Real & Computer Lab)</div><div class="date-caption">Exact A2 exam day is not stated in the timetable.</div></div></div></div></section>`;}
 function backupView(){const storage=(()=>{try{return (new Blob([JSON.stringify(state)]).size/1024).toFixed(1)+' KB';}catch(e){return '—';}})();return `<section class="panel"><div class="panel-head"><h2>حفظ ونقل تقدمك</h2><span class="panel-sub">البيانات محفوظة تلقائيًا في المتصفح</span></div><div class="backup-grid grid"><div class="backup-card"><h3>⬇ تصدير نسخة احتياطية</h3><p>احفظ ملف JSON يحتوي على تقدمك والمحاضرات والسكاشن والمراجعات ونقاط الضعف.</p><button id="exportBtn" class="primary-btn">تصدير التقدم</button></div><div class="backup-card"><h3>⬆ استعادة نسخة احتياطية</h3><p>استرجع تقدمك من ملف سبق تصديره من التطبيق.</p><button id="importBtn" class="secondary-btn">اختيار ملف النسخة الاحتياطية</button></div><div class="backup-card"><h3>◐ المظهر</h3><p>اختار المظهر المناسب للاستخدام اليومي.</p><button id="themeBackupBtn" class="secondary-btn">${state.settings.theme==='dark'?'تفعيل المظهر الفاتح':'تفعيل المظهر الداكن'}</button></div><div class="backup-card"><h3>↺ إعادة ضبط التقدم</h3><p>مسح العلامات والمراجعات ونقاط الضعف من هذا الجهاز. صدّر نسخة أولًا لو محتاجها.</p><button id="resetBtn" class="danger-btn">إعادة ضبط كل البيانات</button></div></div><div class="note">حجم بيانات التقدم الحالية تقريبًا ${storage}. الحفظ محلي على نفس المتصفح والجهاز؛ التصدير مهم قبل تغيير الهاتف أو مسح بيانات Chrome.</div></section><section class="panel"><div class="panel-head"><h2>التثبيت على أندرويد</h2></div><ol style="color:var(--muted);font-size:12px;line-height:2.0;padding-inline-start:22px"><li>افتح نسخة التطبيق من Chrome على أندرويد.</li><li>من قائمة ⋮ اختار <b>Install app</b> أو <b>Add to Home screen</b> عندما يكون التطبيق منشورًا على رابط HTTPS.</li><li>بعد أول فتح، نسخة PWA تقدر تشتغل دون إنترنت وتحفظ تقدمك على الجهاز.</li></ol><div class="note">الملف المستقل يفتح مباشرة في المتصفح. تثبيت PWA كأيقونة مستقلة والعمل Offline يحتاج رفع مجلد التطبيق إلى استضافة HTTPS أول مرة.</div></section>`;}
-function render(){applyTheme();$('#saveStatus').textContent=storageAvailable?'● محفوظ':'! الحفظ غير متاح';$$('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===currentTab));const views={overview,lectures:lecturesView,practicals:practicalView,revision:revisionView,mistakes:mistakesView,final:finalView,backup:backupView};main.innerHTML=views[currentTab]();}
-function go(tab){currentTab=tab;render();window.scrollTo({top:0,behavior:'smooth'});}
+function render(){applyTheme();setSaveStatus(storageAvailable);$$('.tab').forEach(b=>{const active=b.dataset.tab===currentTab;b.classList.toggle('active',active);if(active)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});const views={overview,lectures:lecturesView,practicals:practicalView,revision:revisionView,mistakes:mistakesView,final:finalView,backup:backupView};main.innerHTML=views[currentTab]();}
+function go(tab){currentTab=tab;render();closeMobileSidebar();window.scrollTo({top:0,behavior:'smooth'});}
 function updateCheck(kind,id,stage,checked){if(kind==='lecture')state.lectures[id][stage]=checked;else if(kind==='practical')state.practicals[id][stage]=checked;persist();render();}
 document.addEventListener('click',e=>{
+ if(e.target.closest('#menuToggle')){toggleSidebar();return;}
+ if(e.target.closest('#sidebarOverlay')){setSidebarOpen(false);return;}
  const tab=e.target.closest('[data-tab]');if(tab){go(tab.dataset.tab);return;}
  const goBtn=e.target.closest('[data-go]');if(goBtn){go(goBtn.dataset.go);if(currentTab==='lectures'){lectureFilter='incomplete';render();}return;}
  const filter=e.target.closest('[data-lecture-filter]');if(filter){lectureFilter=filter.dataset.lectureFilter;render();return;}
- if(e.target.id==='themeBtn'||e.target.id==='themeBackupBtn'){state.settings.theme=state.settings.theme==='dark'?'light':'dark';persist();render();return;}
+ if(e.target.closest('#themeBtn')||e.target.closest('#themeBackupBtn')){state.settings.theme=state.settings.theme==='dark'?'light':'dark';persist();render();return;}
  if(e.target.id==='exportBtn'){exportBackup();return;}
  if(e.target.id==='importBtn'){$('#importFile').click();return;}
  if(e.target.id==='resetBtn'){if(confirm('متأكد إنك عايز تمسح كل تقدمك؟ يُفضّل تصدير نسخة احتياطية أولًا.')){state=fresh();persist();render();showToast('تمت إعادة ضبط التقدم.');}return;}
@@ -124,11 +156,11 @@ document.addEventListener('submit',e=>{
  if(f.id==='revisionForm'){const fd=new FormData(f);state.revisionTasks.push({id:crypto.randomUUID?crypto.randomUUID():String(Date.now()),title:fd.get('title').trim(),date:fd.get('date'),kind:fd.get('kind'),done:false});persist();render();showToast('تمت إضافة المراجعة.');}
  if(f.id==='mistakeForm'){const fd=new FormData(f);state.weakPoints.unshift({id:crypto.randomUUID?crypto.randomUUID():String(Date.now()),title:fd.get('title').trim(),subject:fd.get('subject'),problem:fd.get('problem').trim(),fix:fd.get('fix').trim(),date:fd.get('date'),resolved:false});persist();render();showToast('تم حفظ نقطة الضعف.');}
 });
-function exportBackup(){const pack={app:'CVS Study Hub – Section A2',version:1,exportedAt:new Date().toISOString(),data:state};const blob=new Blob([JSON.stringify(pack,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='CVS_A2_Backup_'+new Date().toISOString().slice(0,10)+'.json';a.click();URL.revokeObjectURL(url);showToast('تم تصدير نسخة احتياطية.');}
+function exportBackup(){const pack={app:'CVS Study Hub',version:1,exportedAt:new Date().toISOString(),data:state};const blob=new Blob([JSON.stringify(pack,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='CVS_Study_Hub_Backup_'+new Date().toISOString().slice(0,10)+'.json';a.click();URL.revokeObjectURL(url);showToast('تم تصدير نسخة احتياطية.');}
 $('#importFile').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{const parsed=JSON.parse(await file.text());const incoming=parsed.data||parsed;if(!incoming.lectures||!incoming.practicals)throw new Error('invalid');if(!confirm('استعادة النسخة ستستبدل التقدم الموجود حاليًا. هل تريد المتابعة؟'))return;const base=fresh();state={...base,...incoming,lectures:{...base.lectures,...incoming.lectures},practicals:{...base.practicals,...incoming.practicals},finalChecks:{...base.finalChecks,...incoming.finalChecks},settings:{...base.settings,...incoming.settings}};persist();render();showToast('تم استرجاع تقدمك بنجاح.');}catch(err){showToast('ملف النسخة الاحتياطية غير صالح.');}finally{e.target.value='';}});
-$('#themeBtn').addEventListener('click',()=>{});
 let installPrompt=null;
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;const btn=document.createElement('button');btn.className='primary-btn install-floating';btn.textContent='تثبيت التطبيق';btn.style='position:fixed;left:15px;bottom:85px;z-index:12';btn.onclick=async()=>{installPrompt.prompt();await installPrompt.userChoice;btn.remove();installPrompt=null;};document.body.appendChild(btn);});
 if('serviceWorker' in navigator && location.protocol.startsWith('http')){window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(console.warn));}
+setSidebarOpen(!mobileSidebar());
 render();
 })();
